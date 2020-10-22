@@ -1,0 +1,25 @@
+{
+  "name": "confme-backend",
+  "version": "1.0.0",
+  "description": "NodeJS backend for confme app",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vladKrk/confme-backend.git"
+  },
+  "author": "Vladislav Zhavoronkov",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/vladKrk/confme-backend/issues"
+  },
+  "homepage": "https://github.com/vladKrk/confme-backend#readme",
+  "dependencies": {
+    "express": "^4.17.1",
+    "mysql2": "^2.2.5",
+    "sequelize": "^6.3.5",
+    "socket.io": "^2.3.0"
+  }
+}
