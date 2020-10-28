@@ -1,6 +1,10 @@
 //-------- Константы -----------//
-const SUCCESS = { status: "success" };
-const ERROR = { status: "error" };
+const SUCCESS = (mes = '') => {
+  return JSON.stringify({ status: "success", message: mes });
+}
+const ERROR = (mes = '') => {
+  return JSON.stringify({ status: "error", message: mes });
+}
 
 //-------- Requires -----------//
 const express = require("express"),
@@ -12,7 +16,7 @@ const bcrypt = require("bcrypt");
 const PORT = process.env.PORT || 3000;
 
 const io = require("socket.io")(server, {
-  path: "/app",
+  path: "/",
   serveClient: false,
 
   pingInterval: 10000,
@@ -20,7 +24,12 @@ const io = require("socket.io")(server, {
   cookie: false,
 });
 
+const jwt = require("jsonwebtoken");
+
 const db = require("./app/models");
+
+const authConfig = require('./app/config/auth.config');
+
 //------------------------------------
 
 server.listen(PORT, () => {
@@ -40,29 +49,6 @@ server.listen(PORT, () => {
   console.log("=========Resynced database==========");
 
   createTags();
-
-  // const email = "vlad@mail.ru",
-  //   password = "123456",
-  //   name = "vlad",
-  //   surname = "zhavoronkov";
-
-  //   const salt = await bcrypt.genSalt(10); //async
-  //   const hashPassword = await bcrypt.hash(password, salt); //async
-  // const currentUser = await db.user.create(
-  //   {
-  //     email: email,
-  //     password: hashPassword,
-  //     personal: {
-  //       name: name,
-  //       surname: surname,
-  //     },
-  //   },
-  //   {
-  //     include: db.personal
-  //   }
-  // );
-  // const ntag = await db.tag.findOne({where: {name: 'C++'}});
-  // await currentUser.addTag(ntag);
 })();
 
 async function createTags() {
@@ -75,12 +61,23 @@ async function createTags() {
 }
 
 io.on("connection", (client) => {
+  console.log("Client connected, id: ", client.id);
+  client.on("disconnect", () => {
+    console.log("Client disconnected, id: ", client.id);
+  })
+
+  /*
+    Client-side:
+    socket.emit("registration", data = {email, password, name, surname}, (res) => {
+      if(res.status === 'success'){ ... }
+      if(res.status === 'error){ console.log(res.message) }
+    })
+  */
   client.on("registration", async (data, callBack) => {
     const name = data.name,
       surname = data.surname,
       email = data.email,
       password = data.password;
-
 
     //TODO: Insert this to the sequelize 
     const salt = await bcrypt.genSalt(10); //async
@@ -100,9 +97,41 @@ io.on("connection", (client) => {
           include: db.personal,
         }
       );
-      callBack(JSON.stringify(SUCCESS));
+      callBack(SUCCESS());
     } catch (err) {
-      callBack(JSON.stringify(ERROR));
+      callBack(ERROR());
     }
   });
+
+  client.on("authentication", async (data, callBack) => {
+    const email = data.email,
+          password = data.password;
+    const currentUser = await db.user.findOne({
+      where: {
+        email: email
+      }
+    });
+
+    if(!currentUser) {
+      callBack(ERROR('User doesn`t exist'));
+    }
+    else {
+      const passwordIsValid = await bcrypt.compare(password, currentUser.password);
+      if(!passwordIsValid) {
+        callBack(ERROR('Password isn`t valid'));
+      }
+      else {
+        const token = await jwt.sign({id: currentUser.dataValues.id}, authConfig.secret, {
+          expiresIn: 86400
+        });
+        callBack(SUCCESS({
+          id: currentUser.dataValues.id,
+          name: currentUser.dataValues.name,
+          surname: currentUser.dataValues.surname,
+          accessToken: token
+        }));
+      }
+    }
+  }
+  );
 });
