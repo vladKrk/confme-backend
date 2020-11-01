@@ -1,10 +1,18 @@
 //-------- Константы -----------//
-const SUCCESS = (mes = '') => {
+
+// ЗАПРОСЫ
+const SUCCESS = (mes = "") => {
   return JSON.stringify({ status: "success", message: mes });
-}
-const ERROR = (mes = '') => {
+};
+const ERROR = (mes = "") => {
   return JSON.stringify({ status: "error", message: mes });
-}
+};
+
+// ДИАЛОГИ
+
+const DIALOG_ROOM = (id) => {
+  return "Dialog " + id;
+};
 
 //-------- Requires -----------//
 const express = require("express"),
@@ -28,7 +36,7 @@ const jwt = require("jsonwebtoken");
 
 const db = require("./app/models");
 
-const authConfig = require('./app/config/auth.config');
+const authConfig = require("./app/config/auth.config");
 
 //------------------------------------
 
@@ -64,7 +72,7 @@ io.on("connection", (client) => {
   console.log("Client connected, id: ", client.id);
   client.on("disconnect", () => {
     console.log("Client disconnected, id: ", client.id);
-  })
+  });
 
   /*
     Client-side:
@@ -79,10 +87,10 @@ io.on("connection", (client) => {
       email = data.email,
       password = data.password;
 
-    //TODO: Insert this to the sequelize 
+    //TODO: Insert this to the sequelize
     const salt = await bcrypt.genSalt(10); //async
     const hashPassword = await bcrypt.hash(password, salt); //async
-
+    //TODO: Проверка есть ли уже такой пользователь
     try {
       await db.user.create(
         {
@@ -97,41 +105,112 @@ io.on("connection", (client) => {
           include: db.personal,
         }
       );
-      callBack(SUCCESS());
+      callBack(SUCCESS('User registred'));
     } catch (err) {
-      callBack(ERROR());
+      callBack(ERROR('Cannot register user'));
     }
   });
 
   client.on("authentication", async (data, callBack) => {
     const email = data.email,
-          password = data.password;
+      password = data.password;
     const currentUser = await db.user.findOne({
       where: {
-        email: email
-      }
+        email: email,
+      },
     });
 
-    if(!currentUser) {
-      callBack(ERROR('User doesn`t exist'));
-    }
-    else {
-      const passwordIsValid = await bcrypt.compare(password, currentUser.password);
-      if(!passwordIsValid) {
-        callBack(ERROR('Password isn`t valid'));
+    if (!currentUser) {
+      callBack(ERROR("User doesn`t exist"));
+    } else {
+      const passwordIsValid = await bcrypt.compare(
+        password,
+        currentUser.dataValues.password
+      );
+      if (!passwordIsValid) {
+        callBack(ERROR("Password isn`t valid"));
+      } else {
+        const token = await jwt.sign(
+          { id: currentUser.dataValues.id },
+          authConfig.secret
+        );
+        callBack(
+          SUCCESS({
+            id: currentUser.dataValues.id,
+            name: currentUser.dataValues.name,
+            surname: currentUser.dataValues.surname,
+            accessToken: token,
+          })
+        );
       }
-      else {
-        const token = await jwt.sign({id: currentUser.dataValues.id}, authConfig.secret, {
-          expiresIn: 86400
-        });
-        callBack(SUCCESS({
-          id: currentUser.dataValues.id,
-          name: currentUser.dataValues.name,
-          surname: currentUser.dataValues.surname,
-          accessToken: token
-        }));
-      }
     }
-  }
-  );
+  });
+
+  // Подписка пользователя на сообщения от всех диалогов
+  client.on("join", async (data, callBack) => {
+    const user_id = data.user_id;
+    const userDialogs = await db.dialog.findAll({
+      where: {
+        [db.Sequelize.Op.or]: [{ firstUser_id: { [db.Sequelize.Op.eq]: user_id } }, { secondUser_id: { [db.Sequelize.Op.eq]: user_id } }],
+      },
+    });
+    userDialogs.every((dialog) => {
+      client.join(DIALOG_ROOM(dialog.dataValues.id));
+    });
+    callBack(SUCCESS('User joined to the chats'));
+  });
+
+  client.on("message", async (data, callBack) => {
+    const sender_id = data.sender_id,
+      reciever_id = data.reciever_id,
+      text = data.text;
+
+    const newMessage = await db.message.create({
+      text: text,
+      sender_id: sender_id,
+      reciever_id: reciever_id,
+      read: 0,
+    });
+
+    let currentDialog = await db.dialog.findOne({
+      where: {
+        [db.Sequelize.Op.or]: [
+          {
+            firstUser_id: { [db.Sequelize.Op.eq]: sender_id } ,
+            secondUser_id: { [db.Sequelize.Op.eq]: reciever_id} ,
+          },
+          {
+            firstUser_id: { [db.Sequelize.Op.eq]: reciever_id } ,
+            secondUser_id: { [db.Sequelize.Op.eq]: sender_id} ,
+          },
+        ],
+      },
+    });
+    if (!currentDialog) {
+      currentDialog = await db.dialog.create({
+        firstUser_id: sender_id,
+        secondUser_id: reciever_id,
+        unread: 1,
+        sender_id: sender_id,
+        lastMessage_id: newMessage.dataValues.id,
+      });
+      // Если новый диалог, добавим пользователя в отслеживание сообщений от этого диалога
+      client.join(DIALOG_ROOM(currentDialog.dataValues.id));
+    } else {
+      if (currentDialog.dataValues.sender_id === sender_id) {
+        currentDialog.dataValues.unread++;
+      } else {
+        currentDialog.dataValues.sender_id = sender_id;
+        currentDialog.dataValues.unread = 1;
+      }
+      currentDialog.dataValues.lastMessage_id = newMessage.dataValues.id;
+      currentDialog.save();
+    }
+    await newMessage.setDialog(currentDialog);
+
+    client.broadcast.to(DIALOG_ROOM(currentDialog.dataValues.id)).emit("message", {
+      message: newMessage.dataValues.text,
+    });
+    callBack(SUCCESS('Message sent'));
+  });
 });
