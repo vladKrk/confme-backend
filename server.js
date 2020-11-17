@@ -21,7 +21,7 @@ const express = require("express"),
 
 const bcrypt = require("bcrypt");
 
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 3001;
 
 const io = require("socket.io")(server, {
   path: "/",
@@ -145,7 +145,7 @@ io.on("connection", (client) => {
       }
     }
   });
-
+  
   // Подписка пользователя на сообщения от всех диалогов
   client.on("join", async (data, callBack) => {
     const user_id = data.user_id;
@@ -160,6 +160,7 @@ io.on("connection", (client) => {
     callBack(SUCCESS('User joined to the chats'));
   });
 
+  //Событие отправления сообщения пользователю
   client.on("message", async (data, callBack) => {
     const sender_id = data.sender_id,
       reciever_id = data.reciever_id,
@@ -209,8 +210,94 @@ io.on("connection", (client) => {
     await newMessage.setDialog(currentDialog);
 
     client.broadcast.to(DIALOG_ROOM(currentDialog.dataValues.id)).emit("message", {
-      message: newMessage.dataValues.text,
+      message: {
+        text: newMessage.dataValues.text,
+        sender_id: sender_id
+      }
     });
     callBack(SUCCESS('Message sent'));
   });
+
+  //Отправить клиенту все диалоги указанного пользователя
+  client.on("fetchDialogs", async (data, callBack) => {
+    const user_id = data.user_id;
+    const dialogs = await db.dialog.findAll({
+      where: {
+        [db.Sequelize.Op.or]: [
+          {
+            firstUser_id: { [db.Sequelize.Op.eq]: user_id } ,
+          },
+          {
+            secondUser_id: { [db.Sequelize.Op.eq]: user_id} ,
+          },
+        ],
+      }
+    });
+    callBack(SUCCESS(dialogs));
+  })
+
+  client.on("fetchDialog", async (data, callBack) => {
+    const dialog_id = data.dialog_id;
+    const dialog = await db.dialog.findOne({
+      where: {
+        id: dialog_id
+      }
+    });
+    callBack(SUCCESS(dialog));
+  })
+
+  // Отправить клиенту все сообщения указаного диалога
+  client.on("fetchMessages", async (data, callBack) => {
+    const dialog_id = data.dialog_id;
+    const messages = await db.message.findAll({
+      where: {
+        dialogId: dialog_id
+      }
+    })
+    callBack(SUCCESS(messages));
+  })
+
+  client.on("fetchMessage", async (data, callBack) => {
+    const message_id = data.message_id;
+    const message = await db.message.findOne({
+      where: {
+        id: message_id
+      }
+    })
+    callBack(SUCCESS(message));
+  })
+
+  // Отправить клиенту всех пользователей
+  client.on("fetchUsers", async(data, callBack) => {
+    const users = await db.user.findAll();
+    callBack(SUCCESS(users));
+  })
+
+
+  // Отправить клиенту пользователя с указанными id
+  client.on("fetchUser", async(data, callBack) => {
+    const user_id = data.user_id;
+    const user = await db.user.findOne({
+      where: {
+        id: user_id
+      }
+    });
+    callBack(SUCCESS(user));
+  })
+
+  client.on("fetchPersonals", async(data, callBack) => {
+    const personals = await db.personal.findAll();
+    callBack(SUCCESS(personals));
+  })
+
+  client.on("fetchPersonal", async(data, callBack) => {
+    const user_id = data.user_id;
+    const personal = await db.personal.findOne({
+      where: {
+        userId: user_id
+      }
+    });
+    callBack(SUCCESS(personal));
+  })
+
 });
