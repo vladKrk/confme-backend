@@ -2,10 +2,10 @@
 
 // ЗАПРОСЫ
 const SUCCESS = (mes = "") => {
-  return JSON.stringify({ status: "success", message: mes });
+  return JSON.stringify({ status: "success", data: mes });
 };
 const ERROR = (mes = "") => {
-  return JSON.stringify({ status: "error", message: mes });
+  return JSON.stringify({ status: "error", data: mes });
 };
 
 // ДИАЛОГИ
@@ -37,6 +37,7 @@ const jwt = require("jsonwebtoken");
 const db = require("./app/models");
 
 const authConfig = require("./app/config/auth.config");
+const { Socket } = require("dgram");
 
 //------------------------------------
 
@@ -146,6 +147,11 @@ io.on("connection", (client) => {
     }
   });
   
+  client.on("signOut", async(data, callBack) => {
+    client.leaveAll();
+    callBack(SUCCESS("Sign out succesfully"));
+  });
+
   // Подписка пользователя на сообщения от всех диалогов
   client.on("join", async (data, callBack) => {
     const user_id = data.user_id;
@@ -193,26 +199,31 @@ io.on("connection", (client) => {
         secondUser_id: reciever_id,
         unread: 1,
         sender_id: sender_id,
-        lastMessage_id: newMessage.dataValues.id,
+        lastMessage_id: newMessage.id,
       });
       // Если новый диалог, добавим пользователя в отслеживание сообщений от этого диалога
-      client.join(DIALOG_ROOM(currentDialog.dataValues.id));
+      client.join(DIALOG_ROOM(currentDialog.id));
+      io.to(DIALOG_ROOM(currentDialog.id)).emit("dialogSubscribe", {
+        data: {
+          ...currentDialog.dataValues
+        }
+      });
+
     } else {
-      if (currentDialog.dataValues.sender_id === sender_id) {
-        currentDialog.dataValues.unread++;
+      if (currentDialog.sender_id === sender_id) {
+        currentDialog.unread += 1;
       } else {
-        currentDialog.dataValues.sender_id = sender_id;
-        currentDialog.dataValues.unread = 1;
+        currentDialog.sender_id = sender_id;
+        currentDialog.unread = 1;
       }
-      currentDialog.dataValues.lastMessage_id = newMessage.dataValues.id;
+      currentDialog.lastMessage_id = newMessage.id;
       currentDialog.save();
     }
     await newMessage.setDialog(currentDialog);
 
-    client.broadcast.to(DIALOG_ROOM(currentDialog.dataValues.id)).emit("message", {
-      message: {
-        text: newMessage.dataValues.text,
-        sender_id: sender_id
+    io.to(DIALOG_ROOM(currentDialog.id)).emit("messageSubscribe", {
+      data: {
+        ...newMessage.dataValues
       }
     });
     callBack(SUCCESS('Message sent'));
@@ -237,13 +248,33 @@ io.on("connection", (client) => {
   })
 
   client.on("fetchDialog", async (data, callBack) => {
-    const dialog_id = data.dialog_id;
-    const dialog = await db.dialog.findOne({
-      where: {
-        id: dialog_id
-      }
-    });
-    callBack(SUCCESS(dialog));
+    if(data.dialog_id) {
+      const dialog_id = data.dialog_id;
+      const dialog = await db.dialog.findOne({
+        where: {
+          id: dialog_id
+        }
+      });
+      callBack(SUCCESS(dialog));
+    } else {
+      const userId = data.user_id,
+            friendId = data.friend_id;
+      const dialog = await db.dialog.findOne({
+        where: {
+               [db.Sequelize.Op.or]: [
+          {
+            firstUser_id: { [db.Sequelize.Op.eq]: userId } ,
+            secondUser_id: { [db.Sequelize.Op.eq]: friendId} ,
+          },
+          {
+            firstUser_id: { [db.Sequelize.Op.eq]: friendId } ,
+            secondUser_id: { [db.Sequelize.Op.eq]: userId} ,
+          },
+        ],
+        }
+      })
+      callBack(SUCCESS(dialog));
+    }
   })
 
   // Отправить клиенту все сообщения указаного диалога
@@ -298,6 +329,11 @@ io.on("connection", (client) => {
       }
     });
     callBack(SUCCESS(personal));
+  })
+
+  client.on("countDialogs", async(data, callBack) => {
+    const count = await db.dialog.count();
+    callBack(SUCCESS(count));
   })
 
 });
