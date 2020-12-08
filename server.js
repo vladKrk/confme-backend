@@ -148,6 +148,7 @@ io.on("connection", (client) => {
   });
   
   client.on("signOut", async(data, callBack) => {
+    _ = data;
     client.leaveAll();
     callBack(SUCCESS("Sign out succesfully"));
   });
@@ -211,13 +212,13 @@ io.on("connection", (client) => {
 
     } else {
       if (currentDialog.sender_id === sender_id) {
-        currentDialog.unread += 1;
+        await currentDialog.increment('unread');
       } else {
         currentDialog.sender_id = sender_id;
         currentDialog.unread = 1;
       }
       currentDialog.lastMessage_id = newMessage.id;
-      currentDialog.save();
+      await currentDialog.save();
     }
     await newMessage.setDialog(currentDialog);
 
@@ -228,6 +229,22 @@ io.on("connection", (client) => {
     });
     callBack(SUCCESS('Message sent'));
   });
+
+  client.on("readDialog", async(data, callBack) => {
+    const dialog_id = data.dialog_id;
+    let currentDialog = await db.dialog.findOne({
+      where: {
+        id: dialog_id
+      },
+    });
+    currentDialog.unread = 0;
+    await currentDialog.save();
+    client.broadcast.to(DIALOG_ROOM(currentDialog.id)).emit("readDialogSubscribe", {
+      data: {
+        dialog_id: dialog_id //Отправляем участникам диалога сообщение, что диалог с таким id был прочитан  
+      }
+    });
+  })
 
   //Отправить клиенту все диалоги указанного пользователя
   client.on("fetchDialogs", async (data, callBack) => {
