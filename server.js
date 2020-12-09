@@ -106,9 +106,9 @@ io.on("connection", (client) => {
           include: db.personal,
         }
       );
-      callBack(SUCCESS('User registred'));
+      callBack(SUCCESS("User registred"));
     } catch (err) {
-      callBack(ERROR('Cannot register user'));
+      callBack(ERROR("Cannot register user"));
     }
   });
 
@@ -146,10 +146,9 @@ io.on("connection", (client) => {
       }
     }
   });
-  
+
   client.on("signOut", async(data, callBack) => {
-    _ = data;
-    client.leaveAll();
+    await client.leaveAll();
     callBack(SUCCESS("Sign out succesfully"));
   });
 
@@ -158,13 +157,16 @@ io.on("connection", (client) => {
     const user_id = data.user_id;
     const userDialogs = await db.dialog.findAll({
       where: {
-        [db.Sequelize.Op.or]: [{ firstUser_id: { [db.Sequelize.Op.eq]: user_id } }, { secondUser_id: { [db.Sequelize.Op.eq]: user_id } }],
+        [db.Sequelize.Op.or]: [
+          { firstUser_id: { [db.Sequelize.Op.eq]: user_id } },
+          { secondUser_id: { [db.Sequelize.Op.eq]: user_id } },
+        ],
       },
     });
     userDialogs.every((dialog) => {
       client.join(DIALOG_ROOM(dialog.dataValues.id));
     });
-    callBack(SUCCESS('User joined to the chats'));
+    callBack(SUCCESS("User joined to the chats"));
   });
 
   //Событие отправления сообщения пользователю
@@ -184,12 +186,12 @@ io.on("connection", (client) => {
       where: {
         [db.Sequelize.Op.or]: [
           {
-            firstUser_id: { [db.Sequelize.Op.eq]: sender_id } ,
-            secondUser_id: { [db.Sequelize.Op.eq]: reciever_id} ,
+            firstUser_id: { [db.Sequelize.Op.eq]: sender_id },
+            secondUser_id: { [db.Sequelize.Op.eq]: reciever_id },
           },
           {
-            firstUser_id: { [db.Sequelize.Op.eq]: reciever_id } ,
-            secondUser_id: { [db.Sequelize.Op.eq]: sender_id} ,
+            firstUser_id: { [db.Sequelize.Op.eq]: reciever_id },
+            secondUser_id: { [db.Sequelize.Op.eq]: sender_id },
           },
         ],
       },
@@ -206,13 +208,12 @@ io.on("connection", (client) => {
       client.join(DIALOG_ROOM(currentDialog.id));
       io.to(DIALOG_ROOM(currentDialog.id)).emit("dialogSubscribe", {
         data: {
-          ...currentDialog.dataValues
-        }
+          ...currentDialog.dataValues,
+        },
       });
-
     } else {
       if (currentDialog.sender_id === sender_id) {
-        await currentDialog.increment('unread');
+        await currentDialog.increment("unread");
       } else {
         currentDialog.sender_id = sender_id;
         currentDialog.unread = 1;
@@ -224,27 +225,41 @@ io.on("connection", (client) => {
 
     io.to(DIALOG_ROOM(currentDialog.id)).emit("messageSubscribe", {
       data: {
-        ...newMessage.dataValues
-      }
-    });
-    callBack(SUCCESS('Message sent'));
-  });
-
-  client.on("readDialog", async(data, callBack) => {
-    const dialog_id = data.dialog_id;
-    let currentDialog = await db.dialog.findOne({
-      where: {
-        id: dialog_id
+        ...newMessage.dataValues,
       },
     });
-    currentDialog.unread = 0;
-    await currentDialog.save();
-    client.broadcast.to(DIALOG_ROOM(currentDialog.id)).emit("readDialogSubscribe", {
-      data: {
-        dialog_id: dialog_id //Отправляем участникам диалога сообщение, что диалог с таким id был прочитан  
-      }
+    callBack(SUCCESS("Message sent"));
+  });
+
+  client.on("readDialog", async (data, callBack) => {
+    const dialog_id = data.dialog_id,
+      user_id = data.user_id;
+    let currentDialog = await db.dialog.findOne({
+      where: {
+        id: dialog_id,
+      },
     });
-  })
+    if (!currentDialog) {
+      callBack(ERROR("This dialog doesnt exist"));
+    } else {
+      if (currentDialog.sender_id === user_id) {
+        callBack(SUCCESS("Nothing new to read"));
+      } else {
+        currentDialog.unread = 0;
+        await currentDialog.save();
+        callBack(SUCCESS("Read dialog successfully"));
+      }
+      client.broadcast
+      .to(DIALOG_ROOM(currentDialog.id))
+      .emit("readDialogSubscribe", {
+        // need test
+        data: {
+          dialog_id: dialog_id, //Отправляем участникам диалога сообщение, что диалог с таким id был прочитан
+        },
+      });
+    }
+  
+  });
 
   //Отправить клиенту все диалоги указанного пользователя
   client.on("fetchDialogs", async (data, callBack) => {
@@ -253,104 +268,102 @@ io.on("connection", (client) => {
       where: {
         [db.Sequelize.Op.or]: [
           {
-            firstUser_id: { [db.Sequelize.Op.eq]: user_id } ,
+            firstUser_id: { [db.Sequelize.Op.eq]: user_id },
           },
           {
-            secondUser_id: { [db.Sequelize.Op.eq]: user_id} ,
+            secondUser_id: { [db.Sequelize.Op.eq]: user_id },
           },
         ],
-      }
+      },
     });
     callBack(SUCCESS(dialogs));
-  })
+  });
 
   client.on("fetchDialog", async (data, callBack) => {
-    if(data.dialog_id) {
+    if (data.dialog_id) {
       const dialog_id = data.dialog_id;
       const dialog = await db.dialog.findOne({
         where: {
-          id: dialog_id
-        }
+          id: dialog_id,
+        },
       });
       callBack(SUCCESS(dialog));
     } else {
       const userId = data.user_id,
-            friendId = data.friend_id;
+        friendId = data.friend_id;
       const dialog = await db.dialog.findOne({
         where: {
-               [db.Sequelize.Op.or]: [
-          {
-            firstUser_id: { [db.Sequelize.Op.eq]: userId } ,
-            secondUser_id: { [db.Sequelize.Op.eq]: friendId} ,
-          },
-          {
-            firstUser_id: { [db.Sequelize.Op.eq]: friendId } ,
-            secondUser_id: { [db.Sequelize.Op.eq]: userId} ,
-          },
-        ],
-        }
-      })
+          [db.Sequelize.Op.or]: [
+            {
+              firstUser_id: { [db.Sequelize.Op.eq]: userId },
+              secondUser_id: { [db.Sequelize.Op.eq]: friendId },
+            },
+            {
+              firstUser_id: { [db.Sequelize.Op.eq]: friendId },
+              secondUser_id: { [db.Sequelize.Op.eq]: userId },
+            },
+          ],
+        },
+      });
       callBack(SUCCESS(dialog));
     }
-  })
+  });
 
   // Отправить клиенту все сообщения указаного диалога
   client.on("fetchMessages", async (data, callBack) => {
     const dialog_id = data.dialog_id;
     const messages = await db.message.findAll({
       where: {
-        dialogId: dialog_id
-      }
-    })
+        dialogId: dialog_id,
+      },
+    });
     callBack(SUCCESS(messages));
-  })
+  });
 
   client.on("fetchMessage", async (data, callBack) => {
     const message_id = data.message_id;
     const message = await db.message.findOne({
       where: {
-        id: message_id
-      }
-    })
+        id: message_id,
+      },
+    });
     callBack(SUCCESS(message));
-  })
+  });
 
   // Отправить клиенту всех пользователей
-  client.on("fetchUsers", async(data, callBack) => {
+  client.on("fetchUsers", async (data, callBack) => {
     const users = await db.user.findAll();
     callBack(SUCCESS(users));
-  })
-
+  });
 
   // Отправить клиенту пользователя с указанными id
-  client.on("fetchUser", async(data, callBack) => {
+  client.on("fetchUser", async (data, callBack) => {
     const user_id = data.user_id;
     const user = await db.user.findOne({
       where: {
-        id: user_id
-      }
+        id: user_id,
+      },
     });
     callBack(SUCCESS(user));
-  })
+  });
 
-  client.on("fetchPersonals", async(data, callBack) => {
+  client.on("fetchPersonals", async (data, callBack) => {
     const personals = await db.personal.findAll();
     callBack(SUCCESS(personals));
-  })
+  });
 
-  client.on("fetchPersonal", async(data, callBack) => {
+  client.on("fetchPersonal", async (data, callBack) => {
     const user_id = data.user_id;
     const personal = await db.personal.findOne({
       where: {
-        userId: user_id
-      }
+        userId: user_id,
+      },
     });
     callBack(SUCCESS(personal));
-  })
+  });
 
-  client.on("countDialogs", async(data, callBack) => {
+  client.on("countDialogs", async (data, callBack) => {
     const count = await db.dialog.count();
     callBack(SUCCESS(count));
-  })
-
+  });
 });
