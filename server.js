@@ -19,8 +19,6 @@ const express = require("express"),
   app = express(),
   server = require("http").createServer(app);
 
-const bcrypt = require("bcrypt");
-
 const PORT = process.env.PORT || 3001;
 
 const io = require("socket.io")(server, {
@@ -35,9 +33,12 @@ const io = require("socket.io")(server, {
 const jwt = require("jsonwebtoken");
 
 const db = require("./app/models");
+const bcrypt = require("bcrypt");
 
 const authConfig = require("./app/config/auth.config");
-const { Socket } = require("dgram");
+
+//-------- Controllers -----------//
+const User = require("./app/controllers/user.controller.js");
 
 //------------------------------------
 
@@ -87,39 +88,14 @@ io.on("connection", (client) => {
       surname = data.surname,
       email = data.email,
       password = data.password;
-
-    //TODO: Insert this to the sequelize
-    const salt = await bcrypt.genSalt(10); //async
-    const hashPassword = await bcrypt.hash(password, salt); //async
-    //TODO: Проверка есть ли уже такой пользователь
-    try {
-      await db.user.create(
-        {
-          email: email,
-          password: hashPassword,
-          personal: {
-            name: name,
-            surname: surname,
-          },
-        },
-        {
-          include: db.personal,
-        }
-      );
-      callBack(SUCCESS("User registred"));
-    } catch (err) {
-      callBack(ERROR("Cannot register user"));
-    }
+      await User.create(email, password, name, surname, callBack);
   });
 
   client.on("authentication", async (data, callBack) => {
     const email = data.email,
       password = data.password;
-    const currentUser = await db.user.findOne({
-      where: {
-        email: email,
-      },
-    });
+
+    const currentUser = await User.findOne({email: email});
 
     if (!currentUser) {
       callBack(ERROR("User doesn`t exist"));
@@ -332,18 +308,14 @@ io.on("connection", (client) => {
 
   // Отправить клиенту всех пользователей
   client.on("fetchUsers", async (data, callBack) => {
-    const users = await db.user.findAll();
+    const users = await User.findAll(callBack);
     callBack(SUCCESS(users));
   });
 
   // Отправить клиенту пользователя с указанными id
   client.on("fetchUser", async (data, callBack) => {
     const user_id = data.user_id;
-    const user = await db.user.findOne({
-      where: {
-        id: user_id,
-      },
-    });
+    const user = await User.findOne({id: user_id});
     callBack(SUCCESS(user));
   });
 
